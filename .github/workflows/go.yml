@@ -18,20 +18,20 @@ jobs:
       with:
         go-version: 1.15
 
-    - name: Build windows
+    - name: Build linux binary
       run: GOOS=linux GOARCH=amd64 go build -v ./...
 
     - name: Test
       run: go test -v ./...
       
-    - name: Build linux
+    - name: Build windows binary
       run: GOOS=windows GOARCH=amd64 go build -v ./...
       
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v2.2.3
       with:
         # Artifact name
-        name: package
+        name: execute-binary
         # A file, directory or wildcard pattern that describes what to upload
         path: opengrok-downloader*
         
