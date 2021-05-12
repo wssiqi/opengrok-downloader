@@ -5,7 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"github.com/antchfx/htmlquery"
+	"golang.org/x/net/html"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -19,7 +21,7 @@ func main() {
 
 	var baseFolder string
 	var folderUrl string
-
+	getHttpClient()
 	flag.StringVar(&baseFolder, "o", ".", "download folder, default is . (means download to current folder)")
 	flag.StringVar(&folderUrl, "u", "", "download url, such as http://www.opengrok-server.com/xxx/xxx")
 	flag.Parse()
@@ -44,38 +46,59 @@ func main() {
 	}
 }
 
-func downloadFolder(folder string, folderUrl string) error {
-	doc, err := htmlquery.LoadURL(folderUrl)
-	if err != nil {
-		return errors.New(fmt.Sprint("failed to load url", folderUrl, err.Error()))
+func getHttpClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
 	}
+}
 
-	list := htmlquery.Find(doc, "//table[@id='dirlist']//a[@href and not(@title)]")
-	for _, node := range list {
-		childFilename := htmlquery.SelectAttr(node, "href")
-		// ignore ..
-		if childFilename == ".." {
-			continue
-		}
-
-		childUrl := folderUrl + childFilename
-		childFile := filepath.Join(folder, childFilename)
-		if strings.HasSuffix(childFilename, "/") {
-			err = os.MkdirAll(childFile, os.ModePerm)
-			if err == nil {
-				log.Println(childFile, " folder created")
-				err = downloadFolder(childFile, childUrl)
+func downloadFolder(folder string, folderUrl string) error {
+	var doc, err = loadUrlAsDoc(folderUrl)
+	if err == nil {
+		list := htmlquery.Find(doc, "//table[@id='dirlist']//a[@href and not(@title)]")
+		for _, node := range list {
+			childFilename := htmlquery.SelectAttr(node, "href")
+			// ignore ..
+			if childFilename == ".." {
+				continue
 			}
-		} else {
-			err = downloadFile(childFile, childUrl)
+
+			childUrl := folderUrl + childFilename
+			childFile := filepath.Join(folder, childFilename)
+			if strings.HasSuffix(childFilename, "/") {
+				err = os.MkdirAll(childFile, os.ModePerm)
+				if err == nil {
+					log.Println(childFile, " folder created")
+					err = downloadFolder(childFile, childUrl)
+				}
+			} else {
+				err = downloadFile(childFile, childUrl)
+			}
+
+			if err != nil {
+				break
+			}
 		}
 	}
 
 	return err
 }
 
+func loadUrlAsDoc(folderUrl string) (*html.Node, error) {
+	response, err := getHttpClient().Get(folderUrl)
+	if err == nil {
+		bytes, err := ioutil.ReadAll(response.Body)
+		if err == nil {
+			return htmlquery.Parse(strings.NewReader(string(bytes)))
+		}
+	}
+	return nil, err
+}
+
 func downloadFile(fileSavePath string, fileUrl string) error {
-	fileDetailDoc, err := htmlquery.LoadURL(fileUrl)
+	var fileDetailDoc, err = loadUrlAsDoc(fileUrl)
 	if err != nil {
 		return errors.New(fmt.Sprintf("failed to get file detail page %s, exception %s",
 			fileSavePath, err.Error()))
@@ -121,7 +144,7 @@ func getBaseUrl(url string) string {
 }
 
 func downloadAndSaveFile(fileUrl string, file string) error {
-	resp, err := http.Get(fileUrl)
+	resp, err := getHttpClient().Get(fileUrl)
 	if err != nil {
 		log.Fatal("failed to download file", fileUrl, err.Error())
 	}
