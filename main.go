@@ -21,7 +21,6 @@ func main() {
 
 	var baseFolder string
 	var folderUrl string
-	getHttpClient()
 	flag.StringVar(&baseFolder, "o", ".", "download folder, default is . (means download to current folder)")
 	flag.StringVar(&folderUrl, "u", "", "download url, such as http://www.opengrok-server.com/xxx/xxx")
 	flag.Parse()
