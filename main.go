@@ -39,7 +39,10 @@ func main() {
 		log.Fatalf("failed to create directory %s, exception %s", absBaseFolder, err.Error())
 	}
 
-	err = downloadFolder(absBaseFolder, folderUrl)
+	client := getHttpClient()
+	defer client.CloseIdleConnections()
+
+	err = downloadFolder(client, absBaseFolder, folderUrl)
 	if err != nil {
 		log.Fatalf("failed to download %s to %s, exception %s", folderUrl, absBaseFolder, err.Error())
 	}
@@ -48,13 +51,13 @@ func main() {
 func getHttpClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
+			Proxy:             http.ProxyFromEnvironment,
 		},
 	}
 }
 
-func downloadFolder(folder string, folderUrl string) error {
-	var doc, err = loadUrlAsDoc(folderUrl)
+func downloadFolder(client *http.Client, folder string, folderUrl string) error {
+	var doc, err = loadUrlAsDoc(client, folderUrl)
 	if err == nil {
 		list := htmlquery.Find(doc, "//table[@id='dirlist']//a[@href and not(@title)]")
 		for _, node := range list {
@@ -70,10 +73,10 @@ func downloadFolder(folder string, folderUrl string) error {
 				err = os.MkdirAll(childFile, os.ModePerm)
 				if err == nil {
 					log.Println(childFile, " folder created")
-					err = downloadFolder(childFile, childUrl)
+					err = downloadFolder(client, childFile, childUrl)
 				}
 			} else {
-				err = downloadFile(childFile, childUrl)
+				err = downloadFile(client, childFile, childUrl)
 			}
 
 			if err != nil {
@@ -85,10 +88,12 @@ func downloadFolder(folder string, folderUrl string) error {
 	return err
 }
 
-func loadUrlAsDoc(folderUrl string) (*html.Node, error) {
-	response, err := getHttpClient().Get(folderUrl)
+func loadUrlAsDoc(client *http.Client, folderUrl string) (*html.Node, error) {
+	response, err := client.Get(folderUrl)
 	if err == nil {
-		bytes, err := ioutil.ReadAll(response.Body)
+		body := response.Body
+		defer closeBody(body)
+		bytes, err := ioutil.ReadAll(body)
 		if err == nil {
 			return htmlquery.Parse(strings.NewReader(string(bytes)))
 		}
@@ -96,8 +101,8 @@ func loadUrlAsDoc(folderUrl string) (*html.Node, error) {
 	return nil, err
 }
 
-func downloadFile(fileSavePath string, fileUrl string) error {
-	var fileDetailDoc, err = loadUrlAsDoc(fileUrl)
+func downloadFile(client *http.Client, fileSavePath string, fileUrl string) error {
+	var fileDetailDoc, err = loadUrlAsDoc(client, fileUrl)
 	if err != nil {
 		return errors.New(fmt.Sprintf("failed to get file detail page %s, exception %s",
 			fileSavePath, err.Error()))
@@ -114,7 +119,7 @@ func downloadFile(fileSavePath string, fileUrl string) error {
 
 	downloadLink = getBaseUrl(fileUrl) + downloadLink
 	childTmpFile := fileSavePath + ".tmp"
-	err = downloadAndSaveFile(downloadLink, childTmpFile)
+	err = downloadAndSaveFile(client, downloadLink, childTmpFile)
 	if err != nil {
 		return err
 	}
@@ -142,17 +147,13 @@ func getBaseUrl(url string) string {
 	return url
 }
 
-func downloadAndSaveFile(fileUrl string, file string) error {
-	resp, err := getHttpClient().Get(fileUrl)
+func downloadAndSaveFile(client *http.Client, fileUrl string, file string) error {
+	resp, err := client.Get(fileUrl)
 	if err != nil {
 		log.Fatal("failed to download file", fileUrl, err.Error())
 	}
-	defer func() {
-		closeErr := resp.Body.Close()
-		if closeErr != nil {
-			log.Println("failed to close data", closeErr.Error())
-		}
-	}()
+	body := resp.Body
+	defer closeBody(body)
 
 	fileObj, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -163,7 +164,7 @@ func downloadAndSaveFile(fileUrl string, file string) error {
 	buf := make([]byte, 4096)
 
 	for {
-		nRead, err := resp.Body.Read(buf)
+		nRead, err := body.Read(buf)
 
 		if err != nil && err != io.EOF {
 			return errors.New(fmt.Sprint("failed to read data from resp", fileUrl, err.Error()))
@@ -184,4 +185,13 @@ func downloadAndSaveFile(fileUrl string, file string) error {
 	}
 
 	return nil
+}
+
+func closeBody(body io.ReadCloser) {
+	func() {
+		closeErr := body.Close()
+		if closeErr != nil {
+			log.Println("failed to close data", closeErr.Error())
+		}
+	}()
 }
